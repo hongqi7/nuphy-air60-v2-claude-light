@@ -1,0 +1,49 @@
+#!/bin/bash
+# claude-light: drive the NuPhy side lights from Claude Code hooks.
+#   claude-light working|done|attention|end   (hook JSON on stdin gives the session_id)
+#   claude-light show                          re-apply the combined state
+#   claude-light off                           forget all sessions, lights back to normal
+#
+# Several sessions can run at once; the keyboard shows the most urgent one:
+# attention (blue) > working (orange) > done (green) > off.
+
+DIR="$HOME/.claude/claude-light"
+KBLED="$(cd "$(dirname "$0")" && pwd)/kbled"
+KEYBOARD="${CLAUDE_LIGHT_KEYBOARD:-Air60 V2}"
+STALE_MINUTES=120
+
+mkdir -p "$DIR/sessions"
+
+sid=""
+if [ ! -t 0 ]; then
+    sid=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
+case "$1" in
+    working|done|attention|end)
+        # without a session id nothing would ever clear this state, so don't store it
+        if [ -z "$sid" ]; then
+            echo "claude-light $1: needs hook JSON with session_id on stdin" >&2
+            exit 2
+        fi ;;
+esac
+
+case "$1" in
+    working|done|attention) echo "$1" > "$DIR/sessions/$sid" ;;
+    end)  rm -f "$DIR/sessions/$sid" ;;
+    off)  rm -f "$DIR/sessions/"* ;;
+    show) ;;
+    *)    echo "usage: claude-light working|done|attention|end|show|off" >&2; exit 2 ;;
+esac
+
+# a session that crashed or was interrupted never sends Stop; let it expire
+find "$DIR/sessions" -type f -mmin +$STALE_MINUTES -delete 2>/dev/null
+
+states=$(cat "$DIR/sessions/"* 2>/dev/null)
+if   grep -qx attention <<<"$states"; then num=1 scroll=1
+elif grep -qx working   <<<"$states"; then num=1 scroll=0
+elif grep -qx done      <<<"$states"; then num=0 scroll=1
+else                                       num=0 scroll=0
+fi
+
+"$KBLED" bits "$KEYBOARD" $num $scroll >/dev/null 2>>"$DIR/kbled-error.log"
+exit 0

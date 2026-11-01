@@ -1,0 +1,129 @@
+diff --git a/keyboards/nuphy/air60_v2/ansi/side.c b/keyboards/nuphy/air60_v2/ansi/side.c
+index 4055d8c..e99dae7 100644
+--- a/keyboards/nuphy/air60_v2/ansi/side.c
++++ b/keyboards/nuphy/air60_v2/ansi/side.c
+@@ -311,6 +311,93 @@ void sys_led_show(void)
+     }
+ }
+ 
++/**
++ * @brief  Claude Code status from host LEDs (Mac mode only).
++ *         Num Lock    -> working   (orange breathing)
++ *         Scroll Lock -> done      (green)
++ *         both        -> needs you (blue breathing)
++ */
++#define CLAUDE_IDLE         0
++#define CLAUDE_WORKING      1
++#define CLAUDE_DONE         2
++#define CLAUDE_ATTENTION    3
++#define CLAUDE_MIN_LIGHT    3
++
++static void light_point_playing(uint8_t trend, uint8_t step, uint8_t len, uint8_t *point);
++static void count_rgb_light(uint8_t light_temp);
++
++uint8_t claude_state(void)
++{
++    bool num, scroll;
++
++    if (dev_info.sys_sw_state != SYS_SW_MAC) return CLAUDE_IDLE;
++
++    if (dev_info.link_mode == LINK_USB) {
++        num    = host_keyboard_led_state().num_lock;
++        scroll = host_keyboard_led_state().scroll_lock;
++    } else {
++        if (dev_info.rf_state != RF_CONNECT) return CLAUDE_IDLE;
++        num    = dev_info.rf_led & 0x01;
++        scroll = dev_info.rf_led & 0x04;
++    }
++
++    if (num && scroll) return CLAUDE_ATTENTION;
++    if (num) return CLAUDE_WORKING;
++    if (scroll) return CLAUDE_DONE;
++    return CLAUDE_IDLE;
++}
++
++bool claude_keep_awake(void)
++{
++    uint8_t state = claude_state();
++    return state == CLAUDE_WORKING || state == CLAUDE_ATTENTION;
++}
++
++// scale a channel by level/255 with rounding, so the colour ratio holds at any brightness
++static uint8_t claude_scale(uint8_t c, uint8_t level)
++{
++    return ((uint16_t)c * level + 127) / 255;
++}
++
++static void claude_led_show(void)
++{
++    static uint32_t claude_timer = 0;
++    static uint8_t play_point    = 0;
++    uint8_t state                = claude_state();
++    uint8_t r, g, b, level;
++
++    if (state == CLAUDE_IDLE) return;
++
++    // these LEDs have a strong green die: 0xff,0x40,0x00 already reads as yellow,
++    // so Claude orange needs very little green
++    if (state == CLAUDE_WORKING) {
++        r = 0xff; g = 0x14; b = 0x03;
++    } else if (state == CLAUDE_DONE) {
++        r = 0x00; g = 0xff; b = 0x00;
++    } else {
++        r = 0x00; g = 0x40; b = 0xff;
++    }
++
++    level = side_light_table[side_light > CLAUDE_MIN_LIGHT ? side_light : CLAUDE_MIN_LIGHT];
++
++    if (state != CLAUDE_DONE) {
++        // about 2s per breath, independent of the side light speed setting
++        if (timer_elapsed32(claude_timer) > 15) {
++            claude_timer = timer_read32();
++            light_point_playing(0, 1, BREATHE_TAB_LEN, &play_point);
++        }
++        // breathe between 30% and 100%: near zero the small green value rounds away and the hue drifts
++        level = claude_scale(level, 77 + claude_scale(178, breathe_data_tab[play_point]));
++    }
++
++    r = claude_scale(r, level);
++    g = claude_scale(g, level);
++    b = claude_scale(b, level);
++
++    set_left_rgb(r, g, b);
++    set_right_rgb(r, g, b);
++}
++
+ /**
+  * @brief  light_point_playing.
+  * @param trend:
+@@ -847,6 +934,8 @@ void m_side_led_show(void)
+         case SIDE_OFF:      side_off_mode_show();       break;
+     }
+ 
++    claude_led_show();
++
+     bat_led_show();
+     sleep_sw_led_show();
+     sys_sw_led_show();
+diff --git a/keyboards/nuphy/air60_v2/ansi/sleep.c b/keyboards/nuphy/air60_v2/ansi/sleep.c
+index 7ff93be..8eef0cf 100644
+--- a/keyboards/nuphy/air60_v2/ansi/sleep.c
++++ b/keyboards/nuphy/air60_v2/ansi/sleep.c
+@@ -28,6 +28,7 @@ extern bool             f_wakeup_prepare;
+ extern bool             f_goto_sleep;
+ 
+ uint8_t uart_send_cmd(uint8_t cmd, uint8_t ack_cnt, uint8_t delayms);
++bool    claude_keep_awake(void);
+ 
+ 
+ /**
+@@ -102,7 +103,8 @@ void Sleep_Handle(void) {
+         }
+     } else if (dev_info.rf_state == RF_CONNECT) {
+         rf_disconnect_time = 0;
+-        if (no_act_time >= SLEEP_TIME_DELAY) {
++        // stay awake while Claude is working or waiting for you
++        if (no_act_time >= SLEEP_TIME_DELAY && !claude_keep_awake()) {
+             f_goto_sleep = 1;
+         }
+     } else if (rf_linking_time >= LINK_TIMEOUT) {
