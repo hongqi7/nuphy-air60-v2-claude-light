@@ -11,12 +11,14 @@ DIR="$HOME/.claude/claude-light"
 KBLED="$(cd "$(dirname "$0")" && pwd)/kbled"
 KEYBOARD="${CLAUDE_LIGHT_KEYBOARD:-Air60 V2}"
 STALE_MINUTES=120
+FORGET_MINUTES=10080
 
 mkdir -p "$DIR/sessions"
 
 sid=""
 if [ ! -t 0 ]; then
-    sid=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    # first match = the hook's own top-level session_id; tool input/output later in the JSON may contain others
+    sid=$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 fi
 case "$1" in
     working|done|attention|end)
@@ -35,8 +37,13 @@ case "$1" in
     *)    echo "usage: claude-light working|done|attention|end|show|off" >&2; exit 2 ;;
 esac
 
-# a session that crashed or was interrupted never sends Stop; let it expire
-find "$DIR/sessions" -type f -mmin +$STALE_MINUTES -delete 2>/dev/null
+# a session that crashed or was interrupted never sends Stop: after a while count it as done,
+# so an idle keyboard stays green instead of falling back to the normal lights
+for f in $(find "$DIR/sessions" -type f -mmin +$STALE_MINUTES 2>/dev/null); do
+    grep -qx done "$f" || echo done > "$f"
+done
+# sessions closed without SessionEnd: forget them after a week
+find "$DIR/sessions" -type f -mmin +$FORGET_MINUTES -delete 2>/dev/null
 
 states=$(cat "$DIR/sessions/"* 2>/dev/null)
 if   grep -qx attention <<<"$states"; then num=1 scroll=1
@@ -45,5 +52,10 @@ elif grep -qx done      <<<"$states"; then num=0 scroll=1
 else                                       num=0 scroll=0
 fi
 
-"$KBLED" bits "$KEYBOARD" $num $scroll >/dev/null 2>>"$DIR/kbled-error.log"
+log="$DIR/kbled-error.log"
+"$KBLED" bits "$KEYBOARD" $num $scroll >/dev/null 2>>"$log"
+# writes are refused while the screen is locked, so the log grows every night; keep only its tail
+if [ "$(wc -c < "$log")" -gt 200000 ]; then
+    tail -c 20000 "$log" > "$log.tmp" && mv "$log.tmp" "$log"
+fi
 exit 0

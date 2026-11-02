@@ -145,7 +145,7 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_air60_v2_ansi_v
   ```bash
   ./host/claude-light off
   ```
-  不管它的话，2 小时没有更新的状态也会自动过期。
+  不管它的话，2 小时没有更新的会话会自动算作完成（变绿）。
 - **完全没反应**：先确认键盘背面拨在 **Mac 模式**；再用 `./host/kbled list` 看 Mac 有没有认到键盘（蓝牙下名字类似 `NuPhy Air60 V2-1`）。
 - **键盘名字不一样**：设置环境变量 `CLAUDE_LIGHT_KEYBOARD`（按名字子串匹配，默认 `Air60 V2`）。
 - **后台程序日志**：`~/.claude/claude-light/watch.log`；灯控出错记录在 `~/.claude/claude-light/kbled-error.log`。如果日志里出现 `IOHIDManagerOpen ... Input Monitoring`，到「系统设置 → 隐私与安全性 → 输入监控」里允许 `kbled`，或重启一次后台程序：
@@ -177,7 +177,7 @@ STM32 的 DFU 刷机模式固化在芯片 ROM 里，刷坏了也能重新进入�
 ## 已知限制
 
 - Claude Code 在回复正文里用文字向你提问（而不是弹出提问框）时，算作「这一轮完成」，显示绿色。
-- 用户按 Esc 中断时不会触发 `Stop`，灯会停在橙色，直到下一次动作、会话结束或 2 小时过期。
+- 用户按 Esc 中断时不会触发 `Stop`，灯会停在橙色，直到下一次动作、会话结束，或 2 小时后自动转为绿色。
 - 只在 macOS 上实现了 Mac 端；Windows / Linux 需要另写一个设置键盘指示灯的小工具（原理相同）。
 - 固件基于上游提交 `f1856912d603800eaca227ae2e1c5c8548fdf261`（`nuphy-src/qmk_firmware` 的 `nuphy-keyboards` 分支）。
 
