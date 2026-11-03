@@ -1,8 +1,60 @@
+diff --git a/keyboards/nuphy/air60_v2/ansi/ansi.c b/keyboards/nuphy/air60_v2/ansi/ansi.c
+index 26cd476..7dee9b0 100644
+--- a/keyboards/nuphy/air60_v2/ansi/ansi.c
++++ b/keyboards/nuphy/air60_v2/ansi/ansi.c
+@@ -72,6 +72,7 @@ extern uint8_t bitkb_report_buf[32];
+ extern uint8_t bytekb_report_buf[8];
+ 
+ extern void m_side_led_show(void);
++extern void claude_keys_show(void);
+ extern void Sleep_Handle(void);
+ extern void num_led_show(void);
+ 
+@@ -747,6 +748,7 @@ bool rgb_matrix_indicators_kb(void)
+     if(!rgb_matrix_indicators_user()){
+         return false;
+     }
++    claude_keys_show();
+     if(f_bat_num_show) {
+         num_led_show();
+     }
+diff --git a/keyboards/nuphy/air60_v2/ansi/ansi.h b/keyboards/nuphy/air60_v2/ansi/ansi.h
+index a6d98b9..7557d80 100644
+--- a/keyboards/nuphy/air60_v2/ansi/ansi.h
++++ b/keyboards/nuphy/air60_v2/ansi/ansi.h
+@@ -174,4 +174,6 @@ typedef struct
+     uint8_t ee_side_colour;
+     uint8_t sleep_enable;
+     uint8_t retain2;
++    uint8_t claude_level[3];    // Agent Lumen brightness for working, done, needs-you
++    uint8_t claude_flags;       // 0xA0 or 0xA1 (bit0: whole keyboard breathes); anything else = not set yet
+ } user_config_t;
+diff --git a/keyboards/nuphy/air60_v2/ansi/config.h b/keyboards/nuphy/air60_v2/ansi/config.h
+index cc0cf6f..86d4d40 100644
+--- a/keyboards/nuphy/air60_v2/ansi/config.h
++++ b/keyboards/nuphy/air60_v2/ansi/config.h
+@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #define TAP_CODE_DELAY              8
+ #define DYNAMIC_KEYMAP_MACRO_DELAY  8
+-#define EECONFIG_USER_DATA_SIZE     8
++#define EECONFIG_USER_DATA_SIZE     12
+ 
+ #define DEV_MODE_PIN                C0
+ #define SYS_MODE_PIN                C1
 diff --git a/keyboards/nuphy/air60_v2/ansi/side.c b/keyboards/nuphy/air60_v2/ansi/side.c
-index 4055d8c..361f17b 100644
+index 4055d8c..20d1d06 100644
 --- a/keyboards/nuphy/air60_v2/ansi/side.c
 +++ b/keyboards/nuphy/air60_v2/ansi/side.c
-@@ -311,6 +311,87 @@ void sys_led_show(void)
+@@ -17,6 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ 
+ #include "ansi.h"
+ #include "side.h"
++#include "raw_hid.h"
+ 
+ #define SIDE_WAVE           0
+ #define SIDE_MIX            1
+@@ -311,6 +312,148 @@ void sys_led_show(void)
      }
  }
  
@@ -55,42 +107,103 @@ index 4055d8c..361f17b 100644
 +    return ((uint16_t)c * level + 127) / 255;
 +}
 +
-+static void claude_led_show(void)
-+{
-+    uint8_t state = claude_state();
-+    uint8_t r, g, b, level, point;
++/**
++ * Settings from Agent Lumen, sent over USB raw HID (the wireless module forwards only the lock bits):
++ *   'L' 'M' 0x01 <working> <done> <needs you> <flags>   set brightness per state (0-255) and flags
++ *   'L' 'M' 0x02                                         read them back
++ * The reply echoes the command with the current values and the protocol version in byte 7.
++ * Kept in the user EEPROM block, saved 2 s after the last change so a dragged slider doesn't wear it.
++ */
++#define CLAUDE_CFG_MAGIC    0xA0
++#define CLAUDE_CFG_GLOBAL   0x01
 +
-+    if (state == CLAUDE_IDLE) return;
++static bool     claude_dirty      = false;
++static uint32_t claude_save_timer = 0;
++
++static bool claude_cfg_set(void)
++{
++    return (user_config.claude_flags & ~CLAUDE_CFG_GLOBAL) == CLAUDE_CFG_MAGIC;
++}
++
++bool via_command_kb(uint8_t *data, uint8_t length)
++{
++    if (length < 8 || data[0] != 'L' || data[1] != 'M') return false;
++
++    if (data[2] == 0x01) {
++        for (uint8_t i = 0; i < 3; i++) user_config.claude_level[i] = data[3 + i];
++        user_config.claude_flags = CLAUDE_CFG_MAGIC | (data[6] & CLAUDE_CFG_GLOBAL);
++        claude_dirty      = true;
++        claude_save_timer = timer_read32();
++    }
++    bool set = claude_cfg_set();
++    for (uint8_t i = 0; i < 3; i++) data[3 + i] = set ? user_config.claude_level[i] : 0;
++    data[6] = set ? user_config.claude_flags & CLAUDE_CFG_GLOBAL : 0;
++    data[7] = 1;
++    raw_hid_send(data, length);
++    return true;
++}
++
++// the state's colour at this moment of its breath; false when idle
++static bool claude_colour(uint8_t state, uint8_t *r, uint8_t *g, uint8_t *b)
++{
++    uint8_t level, point;
++
++    if (state == CLAUDE_IDLE) return false;
 +
 +    // these LEDs have a strong green die: 0xff,0x40,0x00 already reads as yellow,
 +    // so Claude orange needs very little green
 +    if (state == CLAUDE_WORKING) {
-+        r = 0xff; g = 0x14; b = 0x03;
++        *r = 0xff; *g = 0x14; *b = 0x03;
 +    } else if (state == CLAUDE_DONE) {
-+        r = 0x00; g = 0xff; b = 0x00;
++        *r = 0x00; *g = 0xff; *b = 0x00;
 +    } else {
-+        r = 0x00; g = 0x40; b = 0xff;
++        *r = 0x00; *g = 0x40; *b = 0xff;
 +    }
 +
-+    level = side_light_table[side_light > CLAUDE_MIN_LIGHT ? side_light : CLAUDE_MIN_LIGHT];
-+
++    if (claude_cfg_set()) {
++        level = user_config.claude_level[state - 1];
++    } else {
++        level = side_light_table[side_light > CLAUDE_MIN_LIGHT ? side_light : CLAUDE_MIN_LIGHT];
++    }
 +    // breathe between 35% and 100% (near zero the small green value rounds away and the hue drifts);
 +    // the phase comes from the clock, so the speed doesn't depend on how often this runs
 +    point = (uint32_t)(timer_read32() % claude_period_ms[state]) * BREATHE_TAB_LEN / claude_period_ms[state];
 +    level = claude_scale(level, 89 + claude_scale(166, breathe_data_tab[point]));
 +
-+    r = claude_scale(r, level);
-+    g = claude_scale(g, level);
-+    b = claude_scale(b, level);
++    *r = claude_scale(*r, level);
++    *g = claude_scale(*g, level);
++    *b = claude_scale(*b, level);
++    return true;
++}
 +
++static void claude_led_show(void)
++{
++    uint8_t r, g, b;
++
++    if (claude_dirty && timer_elapsed32(claude_save_timer) > 2000) {
++        claude_dirty = false;
++        eeconfig_update_user_datablock(&user_config);
++    }
++
++    if (!claude_colour(claude_state(), &r, &g, &b)) return;
 +    set_left_rgb(r, g, b);
 +    set_right_rgb(r, g, b);
++}
++
++// optional: the key backlight breathes too; called after the RGB effect has drawn the frame
++void claude_keys_show(void)
++{
++    uint8_t r, g, b;
++
++    if (!claude_cfg_set() || !(user_config.claude_flags & CLAUDE_CFG_GLOBAL)) return;
++    if (!claude_colour(claude_state(), &r, &g, &b)) return;
++    for (uint8_t i = 0; i < SIDE_INDEX; i++) rgb_matrix_set_color(i, r, g, b);
 +}
 +
  /**
   * @brief  light_point_playing.
   * @param trend:
-@@ -847,6 +928,8 @@ void m_side_led_show(void)
+@@ -847,6 +990,8 @@ void m_side_led_show(void)
          case SIDE_OFF:      side_off_mode_show();       break;
      }
  
