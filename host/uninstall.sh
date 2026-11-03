@@ -1,9 +1,8 @@
 #!/bin/bash
-# Remove the Claude Code hooks and the reconnect watcher, and turn the status lights off.
+# Remove the agent hooks and the reconnect watcher, and turn the status lights off.
 set -euo pipefail
 
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
-SETTINGS="$HOME/.claude/settings.json"
 AGENT_PLIST="$HOME/Library/LaunchAgents/local.claude-light.watch.plist"
 
 if [ -f "$AGENT_PLIST" ]; then
@@ -12,9 +11,10 @@ if [ -f "$AGENT_PLIST" ]; then
     rm -f "$AGENT_PLIST"
 fi
 
-if [ -f "$SETTINGS" ]; then
+for SETTINGS in "$HOME/.claude/settings.json" "$HOME/.workbuddy/settings.json" "$HOME/.config/devin/config.json"; do
+    [ -f "$SETTINGS" ] && grep -q claude-light "$SETTINGS" || continue
     echo "==> removing hooks from $SETTINGS"
-    cp "$SETTINGS" "$SETTINGS.bak-claude-light-$(date +%Y%m%d%H%M%S)"
+    cp -p "$SETTINGS" "$SETTINGS.bak-claude-light-$(date +%Y%m%d%H%M%S)"
     python3 - "$SETTINGS" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -29,7 +29,7 @@ for event in list(hooks):
 with open(path, "w") as f:
     json.dump(s, f, indent=2, ensure_ascii=False)
 PY
-fi
+done
 
 "$HOST_DIR/claude-light" off </dev/null || true
 echo "==> done. The firmware stays on the keyboard; with no signal it behaves like stock."

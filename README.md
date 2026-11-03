@@ -1,15 +1,17 @@
-# NuPhy Air60 V2 × Claude Code 状态灯
+# NuPhy Air60 V2 × AI Agent 状态灯
 
-让 **NuPhy Air60 V2** 键盘两侧的 RGB 侧灯跟着 [Claude Code](https://claude.com/claude-code) 的状态变化：
+让 **NuPhy Air60 V2** 键盘两侧的 RGB 侧灯跟着 AI 编程助手的状态变化。支持 [Claude Code](https://claude.com/claude-code)、WorkBuddy、Devin（本机会话），几个工具、几个会话同时开也没问题：
 
-| Claude Code 在做什么 | 侧灯 |
+| Agent 在做什么 | 侧灯 |
 |---|---|
 | 思考中、调用工具干活中 | 🟠 Claude 橙色呼吸 |
 | 等你确认（权限批准框、选择题提问框） | 🔵 蓝色呼吸 |
 | 这一轮回答完成 | 🟢 绿色常亮 |
 | 会话结束 / 没在用 | 恢复你自己设置的侧灯效果 |
 
-不用盯着屏幕，余光看一眼键盘就知道 Claude 还在跑、在等你，还是已经干完了。蓝牙、有线下都能用。
+不用盯着屏幕，余光看一眼键盘就知道 agent 还在跑、在等你，还是已经干完了。蓝牙、有线下都能用。
+
+另有 **NuPhy Halo65 V2** 的实验版补丁（整圈光环显示状态），见[下文](#halo65-v2实验版)。
 
 > English summary is at the [bottom](#english-summary).
 
@@ -22,14 +24,16 @@
 - **连接方式**：蓝牙、有线已实测；2.4G 接收器走的是同一条代码路径，理论上可用但未实测
 - 键盘背面的系统开关需拨到 **Mac 模式**。Win 模式下固件行为和原厂完全一样
 
-其他 NuPhy V2 系列（Air75 V2、Air96 V2 等）用的是同一套开源代码结构，改起来思路相同，但本仓库只在 Air60 V2 上验证过，**别直接把这里的 bin 刷到别的型号上**。
+其他 NuPhy V2 系列（Air75 V2、Air96 V2 等）用的是同一套开源代码结构，改起来思路相同，但本仓库只在 Air60 V2 上验证过，**别直接把这里的 bin 刷到别的型号上**。Halo65 V2 有单独的补丁，尚未实机验证。
+
+注意：NuPhy 后来的 V3 系列和标着「IO 版」的型号换成了闭源固件，没法这样改。
 
 ---
 
 ## 工作原理
 
 ```
-Claude Code 钩子 ──► claude-light 脚本 ──► kbled（IOKit）
+Claude Code / WorkBuddy / Devin 钩子 ──► claude-light 脚本 ──► kbled（IOKit）
                                               │  Num Lock / Scroll Lock 指示灯信号
                                               ▼  （标准 HID 输出报告，蓝牙也能传）
                                          键盘里改过的固件 ──► 两侧灯条
@@ -52,7 +56,7 @@ Claude Code 钩子 ──► claude-light 脚本 ──► kbled（IOKit）
 
 3. **Mac 端**（[`host/`](host/)）：
    - `kbled`：约 130 行 C，用 IOKit 设置键盘的指示灯。只写指示灯，**不读取任何按键内容**，不联网。
-   - `claude-light`：给 Claude Code 钩子调用的小脚本，按会话记录状态，多个会话同时运行时显示最紧急的那个（蓝 > 橙 > 绿）。
+   - `claude-light`：给各 agent 钩子调用的小脚本，按会话记录状态（其他 agent 的会话带上 `workbuddy-`、`devin-` 前缀），多个会话同时运行时显示最紧急的那个（蓝 > 橙 > 绿）。
    - `kbled watch`（可选的后台程序）：键盘断开重连后（切换模式、休眠醒来）指示灯状态会被清空，它会在键盘连上约 2 秒后补发当前状态，另外每 20 秒补发一次兜底。
 
 ### 关于颜色的一个坑
@@ -121,21 +125,30 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_air60_v2_ansi_v
 
 它会：
 - 编译 `host/kbled`
-- 往 `~/.claude/settings.json` 加入钩子（改之前自动备份原文件，重复运行不会重复添加）
+- 往 `~/.claude/settings.json` 加入钩子；装了 WorkBuddy（有 `~/.workbuddy`）或 Devin（有 `~/.config/devin`）的话，也往 `~/.workbuddy/settings.json`、`~/.config/devin/config.json` 里加。改之前都会自动备份原文件，重复运行不会重复添加
 - 安装重连补发的后台程序（LaunchAgent `local.claude-light.watch`）。不想要后台程序就用 `./host/install.sh --no-agent`
 
-安装后新开一个 Claude Code 会话，发条消息，侧灯应该变成橙色呼吸，答完变绿。
+安装后新开一个会话（Devin 桌面版要先退出重开），发条消息，侧灯应该变成橙色呼吸，答完变绿。
 
 ### 加入的钩子
 
-| 钩子 | 动作 |
-|---|---|
-| `UserPromptSubmit` | 橙 |
-| `PostToolUse`（所有工具） | 橙（也用于批准后从蓝切回橙） |
-| `PreToolUse`（`AskUserQuestion`） | 蓝 |
-| `Notification`（`permission_prompt`） | 蓝 |
-| `Stop` | 绿 |
-| `SessionEnd` | 清除该会话 |
+三个工具的钩子格式相同（WorkBuddy、Devin 都沿用了 Claude Code 的格式），只是支持的事件不完全一样：
+
+| 钩子 | 动作 | Claude Code | WorkBuddy | Devin |
+|---|---|:---:|:---:|:---:|
+| `UserPromptSubmit` | 橙 | ✓ | ✓ | ✓ |
+| `PostToolUse`（所有工具） | 橙（也用于批准后从蓝切回橙） | ✓ | ✓ | ✓ |
+| `PreToolUse`（`AskUserQuestion`） | 蓝 | ✓ | | |
+| `Notification`（`permission_prompt`） | 蓝 | ✓ | ✓ | |
+| `PermissionRequest` | 蓝 | | ✓ | ✓ |
+| `Stop` / `StopFailure` | 绿 | ✓ | ✓ | ✓（仅 `Stop`） |
+| `SessionEnd` | 清除该会话 | ✓ | ✓ | ✓ |
+
+Devin 有两个坑：
+- 只认 `PreToolUse`、`PostToolUse`、`PermissionRequest`、`UserPromptSubmit`、`Stop`、`PostCompaction`、`SessionStart`、`SessionEnd`。`hooks` 里只要出现别的事件名，整份钩子配置都会被丢掉，所以别往里加 `Notification`。
+- 在你答复「是否信任此工作区」之前不会运行任何钩子。
+
+只有本机运行的会话会亮灯，Devin 云端会话不会。
 
 ---
 
@@ -147,12 +160,40 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_air60_v2_ansi_v
   ```
   不管它的话，2 小时没有更新的会话会自动算作完成（变绿）。
 - **完全没反应**：先确认键盘背面拨在 **Mac 模式**；再用 `./host/kbled list` 看 Mac 有没有认到键盘（蓝牙下名字类似 `NuPhy Air60 V2-1`）。
-- **键盘名字不一样**：设置环境变量 `CLAUDE_LIGHT_KEYBOARD`（按名字子串匹配，默认 `Air60 V2`）。
+- **键盘名字不一样**：设置环境变量 `CLAUDE_LIGHT_KEYBOARD`（按名字子串匹配，默认 `NuPhy`，Air60 V2 和 Halo65 V2 都能匹配）。
+- **某个 agent 不亮灯**：看 `~/.claude/claude-light/kbled-error.log`。钩子传来的数据里找不到 `session_id` 时，这里会记下前 300 个字符。脚本这时只记日志、正常退出：在钩子协议里退出码 2 表示「拦截」，会挡住你的提问或权限请求。
 - **后台程序日志**：`~/.claude/claude-light/watch.log`；灯控出错记录在 `~/.claude/claude-light/kbled-error.log`。如果日志里出现 `IOHIDManagerOpen ... Input Monitoring`，到「系统设置 → 隐私与安全性 → 输入监控」里允许 `kbled`，或重启一次后台程序：
   ```bash
   launchctl kickstart -k gui/$(id -u)/local.claude-light.watch
   ```
 - **自己编译时报 `stdint.h: No such file`**：Homebrew 的 `arm-none-eabi-gcc` 不带 C 标准库（newlib），要用 `osx-cross/arm/arm-gcc-bin@8`，`build.sh` 已经处理。
+
+---
+
+## Halo65 V2（实验版）
+
+> ⚠️ **尚未在实机上验证**：代码能编译，但颜色和动画还没在真键盘上看过。仓库里不提供编好的 bin，需要自己编译；刷之前一定先备份原厂固件。
+
+Halo65 V2（65% 配列、高轴）和 Air60 V2 是同一颗芯片（STM32F072）、同一套开源代码结构，刷机方式也一样。区别在于状态显示在键盘四周那圈 **50 颗灯的光环**上：
+
+| 状态 | 光环 |
+|---|---|
+| 工作中 | 橙色光点带着渐暗的尾巴绕光环转圈（约 2 秒一圈），其余灯暗橙底色 |
+| 等你确认 | 整圈蓝色呼吸 |
+| 完成 | 整圈绿色常亮 |
+
+配色按 NuPhy 自己给光环调的比例来：它的光环绿、蓝灯珠特别亮，官方色表里纯绿、纯蓝只用到 `0x60`，红色用到 `0xff`。另外 10 颗灯 NuPhy 单独换了一套偏暗红的色表，补丁按同样比例做了补偿。
+
+买的时候认准标「QMK/VIA」的版本，「Halo IO」是闭源固件。
+
+```bash
+./firmware/build.sh halo65        # 补丁：firmware/halo65-claude-light.patch
+# 进入刷机模式（同 Air60）后：
+dfu-util -d 0483:df11 -a 0 -s 0x08000000:131072 -U halo65v2_backup.bin   # 先备份
+dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_halo65_v2_ansi_via.bin
+```
+
+Mac 端不用另装，默认的 `NuPhy` 名字匹配两把键盘都认。
 
 ---
 
@@ -162,7 +203,7 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_air60_v2_ansi_v
 ./host/uninstall.sh
 ```
 
-移除钩子和后台程序，并把灯恢复正常。固件留在键盘上也没关系：没有信号时它和原厂行为一致。
+移除三个工具里的钩子和后台程序，并把灯恢复正常。固件留在键盘上也没关系：没有信号时它和原厂行为一致。
 
 想彻底还原固件，进入刷机模式后刷回第 2 步的备份：
 
@@ -196,9 +237,9 @@ GPL-2.0-or-later（固件改动派生自 GPL 授权的 QMK / NuPhy 源码）。�
 
 ## English summary
 
-Turns the RGB side lights of a **NuPhy Air60 V2** (ANSI) into a Claude Code status indicator on macOS: **orange breathing** while Claude is working, **blue breathing** while it waits for your approval or an answer, **green** when the turn is done, and your normal lighting otherwise. Works over Bluetooth and USB.
+Turns the RGB side lights of a **NuPhy Air60 V2** (ANSI) into an AI agent status indicator on macOS: **orange breathing** while the agent is working, **blue breathing** while it waits for your approval or an answer, **green** when the turn is done, and your normal lighting otherwise. Works over Bluetooth and USB. Supports Claude Code, WorkBuddy and Devin (local sessions), all of which use the same hook format; `host/install.sh` adds the hooks to every one it finds. An experimental, not yet hardware-tested patch for the **NuPhy Halo65 V2** shows the state on its 50-LED halo (`firmware/build.sh halo65`).
 
-How: Claude Code hooks call `host/claude-light`, which uses IOKit (`host/kbled`) to set the keyboard's **Num Lock / Scroll Lock** indicator bits (macOS never uses them). A small patch to NuPhy's open-source QMK firmware (`firmware/claude-light.patch`, touching `side.c` and `sleep.c`) maps those bits to the side lights and keeps the board awake while Claude is busy. NuPhy's wireless module forwards the 3 lock bits, so it works over Bluetooth too.
+How: agent hooks call `host/claude-light`, which uses IOKit (`host/kbled`) to set the keyboard's **Num Lock / Scroll Lock** indicator bits (macOS never uses them). A small patch to NuPhy's open-source QMK firmware (`firmware/claude-light.patch`, touching `side.c` and `sleep.c`) maps those bits to the side lights and keeps the board awake while Claude is busy. NuPhy's wireless module forwards the 3 lock bits, so it works over Bluetooth too.
 
 Install: enter DFU (cable in → power switch off → hold Esc → switch to wired → release), back up with `dfu-util -U`, flash `firmware/nuphy_air60_v2_ansi_via_claude-light.bin` (or build with `firmware/build.sh`), then run `host/install.sh`. Uninstall with `host/uninstall.sh`; restore stock firmware from your backup.
 

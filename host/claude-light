@@ -1,32 +1,38 @@
 #!/bin/bash
-# claude-light: drive the NuPhy side lights from Claude Code hooks.
-#   claude-light working|done|attention|end   (hook JSON on stdin gives the session_id)
-#   claude-light show                          re-apply the combined state
-#   claude-light off                           forget all sessions, lights back to normal
+# claude-light: drive the NuPhy side lights from agent hooks (Claude Code, WorkBuddy, Devin).
+#   claude-light working|done|attention|end [agent]   (hook JSON on stdin gives the session_id)
+#   claude-light show                                  re-apply the combined state
+#   claude-light off                                   forget all sessions, lights back to normal
 #
-# Several sessions can run at once; the keyboard shows the most urgent one:
+# Several sessions can run at once, from any agent; the keyboard shows the most urgent one:
 # attention (blue) > working (orange) > done (green) > off.
 
 DIR="$HOME/.claude/claude-light"
 KBLED="$(cd "$(dirname "$0")" && pwd)/kbled"
-KEYBOARD="${CLAUDE_LIGHT_KEYBOARD:-Air60 V2}"
+KEYBOARD="${CLAUDE_LIGHT_KEYBOARD:-NuPhy}"
 STALE_MINUTES=120
 FORGET_MINUTES=10080
 
 mkdir -p "$DIR/sessions"
 
 sid=""
+input=""
 if [ ! -t 0 ]; then
+    input=$(cat)
     # first match = the hook's own top-level session_id; tool input/output later in the JSON may contain others
-    sid=$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    sid=$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$input" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 fi
 case "$1" in
     working|done|attention|end)
-        # without a session id nothing would ever clear this state, so don't store it
+        # without a session id nothing would ever clear this state, so don't store it.
+        # exit 0: in hook protocols exit 2 means "block", which would stop the user's prompt or tool call
         if [ -z "$sid" ]; then
-            echo "claude-light $1: needs hook JSON with session_id on stdin" >&2
-            exit 2
-        fi ;;
+            echo "$(date '+%F %T') claude-light $1 ${2:-claude}: no session_id in hook JSON: ${input:0:300}" >>"$DIR/kbled-error.log"
+            exit 0
+        fi
+        # other agents get their own prefix so their session ids can never collide with Claude's
+        [ -n "$2" ] && sid="$2-$sid"
+        sid=${sid//\//_} ;;
 esac
 
 case "$1" in

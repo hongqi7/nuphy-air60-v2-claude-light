@@ -2,3 +2,4 @@ host/kbled
 firmware/qmk_firmware/
 firmware/nuphy_air60_v2_ansi_via.bin
 .DS_Store
+firmware/nuphy_halo65_v2_ansi_via.bin
