@@ -1,16 +1,17 @@
 diff --git a/keyboards/nuphy/halo65_v2/ansi/side.c b/keyboards/nuphy/halo65_v2/ansi/side.c
-index f381029..0562c49 100644
+index f381029..58f2812 100644
 --- a/keyboards/nuphy/halo65_v2/ansi/side.c
 +++ b/keyboards/nuphy/halo65_v2/ansi/side.c
-@@ -402,6 +402,122 @@ void sys_led_show(void)
+@@ -402,6 +402,99 @@ void sys_led_show(void)
      }
  }
  
 +/**
 + * @brief  Claude Code status from host LEDs (Mac mode only), shown on the whole halo.
-+ *         Num Lock    -> working   (orange, a bright spot circling the halo)
-+ *         Scroll Lock -> done      (green)
-+ *         both        -> needs you (blue breathing)
++ *         Num Lock    -> working   (orange, 2 s breath)
++ *         Scroll Lock -> done      (green, 3 s breath)
++ *         both        -> needs you (blue, 1.2 s breath)
++ *         Same colours and timing as the Agent Lumen screen glow.
 + */
 +#define CLAUDE_IDLE         0
 +#define CLAUDE_WORKING      1
@@ -18,9 +19,9 @@ index f381029..0562c49 100644
 +#define CLAUDE_ATTENTION    3
 +#define CLAUDE_MIN_LIGHT    3
 +#define CLAUDE_HALO_LEN     50
-+#define CLAUDE_TAIL_LEN     12
 +
-+static void light_point_playing(uint8_t trend, uint8_t step, uint8_t len, uint8_t *point);
++// breath length per state, indexed by the values above
++static const uint16_t claude_period_ms[] = { 1, 2000, 3000, 1200 };
 +
 +uint8_t claude_state(void)
 +{
@@ -70,10 +71,8 @@ index f381029..0562c49 100644
 +
 +static void claude_led_show(void)
 +{
-+    static uint32_t claude_timer = 0;
-+    static uint8_t play_point    = 0;
-+    uint8_t state                = claude_state();
-+    uint8_t r, g, b, level;
++    uint8_t state = claude_state();
++    uint8_t r, g, b, level, point;
 +
 +    if (state == CLAUDE_IDLE) return;
 +
@@ -88,44 +87,22 @@ index f381029..0562c49 100644
 +    }
 +
 +    level = side_light_table[side_light > CLAUDE_MIN_LIGHT ? side_light : CLAUDE_MIN_LIGHT];
++    // breathe between 35% and 100% (near zero the small green value rounds away and the hue drifts);
++    // the phase comes from the clock, so the speed doesn't depend on how often this runs
++    point = (uint32_t)(timer_read32() % claude_period_ms[state]) * BREATHE_TAB_LEN / claude_period_ms[state];
++    level = claude_scale(level, 89 + claude_scale(166, breathe_data_tab[point]));
 +
-+    if (state == CLAUDE_DONE) {
-+        for (uint8_t i = 0; i < CLAUDE_HALO_LEN; i++)
-+            claude_set_halo_led(side_led_index_tab[i], claude_scale(r, level), claude_scale(g, level), claude_scale(b, level));
-+        return;
-+    }
-+
-+    if (state == CLAUDE_ATTENTION) {
-+        // about 2s per breath, independent of the side light speed setting
-+        if (timer_elapsed32(claude_timer) > 15) {
-+            claude_timer = timer_read32();
-+            light_point_playing(0, 1, BREATHE_TAB_LEN, &play_point);
-+        }
-+        // breathe between 30% and 100%: near zero the small green value rounds away and the hue drifts
-+        level = claude_scale(level, 77 + claude_scale(178, breathe_data_tab[play_point]));
-+        for (uint8_t i = 0; i < CLAUDE_HALO_LEN; i++)
-+            claude_set_halo_led(side_led_index_tab[i], claude_scale(r, level), claude_scale(g, level), claude_scale(b, level));
-+        return;
-+    }
-+
-+    // working: a bright head with a fading tail circles the halo, about 2s per lap, over a dim ring
-+    if (timer_elapsed32(claude_timer) > 40) {
-+        claude_timer = timer_read32();
-+        light_point_playing(1, 1, CLAUDE_HALO_LEN, &play_point);
-+    }
-+    for (uint8_t i = 0; i < CLAUDE_HALO_LEN; i++) {
-+        uint8_t dist = (play_point + CLAUDE_HALO_LEN - i) % CLAUDE_HALO_LEN;
-+        uint8_t spot = 64;
-+        if (dist < CLAUDE_TAIL_LEN) spot = 255 - (uint16_t)(255 - 64) * dist / CLAUDE_TAIL_LEN;
-+        uint8_t l = claude_scale(level, spot);
-+        claude_set_halo_led(side_led_index_tab[i], claude_scale(r, l), claude_scale(g, l), claude_scale(b, l));
-+    }
++    r = claude_scale(r, level);
++    g = claude_scale(g, level);
++    b = claude_scale(b, level);
++    for (uint8_t i = 0; i < CLAUDE_HALO_LEN; i++)
++        claude_set_halo_led(side_led_index_tab[i], r, g, b);
 +}
 +
  /**
   * @brief  light_point_playing.
   * @param trend:
-@@ -1162,9 +1278,11 @@ void m_side_led_show(void)
+@@ -1162,9 +1255,11 @@ void m_side_led_show(void)
          case SIDE_NEW:      side_new_mode_show();       break; 
          case SIDE_MIX:      side_spectrum_mode_show();  break;  
          case SIDE_BREATH:   side_breathe_mode_show();   break;

@@ -4,12 +4,14 @@
 
 | Agent 在做什么 | 侧灯 |
 |---|---|
-| 思考中、调用工具干活中 | 🟠 Claude 橙色呼吸 |
-| 等你确认（权限批准框、选择题提问框） | 🔵 蓝色呼吸 |
-| 这一轮回答完成 | 🟢 绿色常亮 |
+| 思考中、调用工具干活中 | 🟠 Claude 橙色呼吸，约 2 秒一次 |
+| 等你确认（权限批准框、选择题提问框） | 🔵 蓝色呼吸，约 1.2 秒一次 |
+| 这一轮回答完成 | 🟢 绿色呼吸，约 3 秒一次 |
 | 会话结束 / 没在用 | 恢复你自己设置的侧灯效果 |
 
 不用盯着屏幕，余光看一眼键盘就知道 agent 还在跑、在等你，还是已经干完了。蓝牙、有线下都能用。
+
+**Mac 端推荐用 [Agent Lumen（灵光）](https://github.com/hongqi7/agent-lumen)**：一个状态栏小 App，下载即用。它负责接入各个 AI 工具、驱动键盘灯，还会在屏幕边缘和状态栏用同样的颜色、同样的呼吸节奏一起亮。本仓库的 `host/` 脚本是不装 App 的命令行方案，**两者二选一**：Agent Lumen 接入时会自动把这里的钩子换成它的。
 
 另有 **NuPhy Halo65 V2** 的实验版补丁（整圈光环显示状态），见[下文](#halo65-v2实验版)。
 
@@ -33,7 +35,7 @@
 ## 工作原理
 
 ```
-Claude Code / WorkBuddy / Devin 钩子 ──► claude-light 脚本 ──► kbled（IOKit）
+Claude Code / WorkBuddy / Devin 钩子 ──► Agent Lumen（或 claude-light 脚本 + kbled）
                                               │  Num Lock / Scroll Lock 指示灯信号
                                               ▼  （标准 HID 输出报告，蓝牙也能传）
                                          键盘里改过的固件 ──► 两侧灯条
@@ -51,10 +53,10 @@ Claude Code / WorkBuddy / Devin 钩子 ──► claude-light 脚本 ──► k
    NuPhy 的开源固件里，无线模块会把这 3 位指示灯状态原样转给主控（见上游 `rf.c` 里对 `rf_led` 的处理），所以**蓝牙下也能用**，不需要插线。
 
 2. **固件改动**（[`firmware/claude-light.patch`](firmware/claude-light.patch)，只动了两个文件）：
-   - `side.c`：新增 `claude_led_show()`，读到上面的信号就接管左右两条侧灯；没信号时完全不干预。大写锁定、低电量、连接状态等原有提示仍然优先显示。
+   - `side.c`：新增 `claude_led_show()`，读到上面的信号就接管左右两条侧灯；没信号时完全不干预。大写锁定、低电量、连接状态等原有提示仍然优先显示。三种状态都呼吸（蓝 1.2 秒、橙 2 秒、绿 3 秒，35%～100%），节奏按时钟计算，和 Agent Lumen 的屏幕光用同一张呼吸曲线表。
    - `sleep.c`：Claude 工作中或等你确认时，键盘不进入 6 分钟无操作休眠，免得长任务跑到一半灯灭了。完成后照常休眠。
 
-3. **Mac 端**（[`host/`](host/)）：
+3. **Mac 端**：推荐 [Agent Lumen](https://github.com/hongqi7/agent-lumen)。也可以用本仓库的命令行方案（[`host/`](host/)）：
    - `kbled`：约 130 行 C，用 IOKit 设置键盘的指示灯。只写指示灯，**不读取任何按键内容**，不联网。
    - `claude-light`：给各 agent 钩子调用的小脚本，按会话记录状态（其他 agent 的会话带上 `workbuddy-`、`devin-` 前缀），多个会话同时运行时显示最紧急的那个（蓝 > 橙 > 绿）。
    - `kbled watch`（可选的后台程序）：键盘断开重连后（切换模式、休眠醒来）指示灯状态会被清空，它会在键盘连上约 2 秒后补发当前状态，另外每 20 秒补发一次兜底。
@@ -63,7 +65,7 @@ Claude Code / WorkBuddy / Devin 钩子 ──► claude-light 脚本 ──► k
 
 这块键盘的灯珠**绿色特别亮**：NuPhy 自己的代码里 `(255, 64, 0)` 显示出来是「黄色」（有线模式指示），`(255, 32, 0)` 才是「橙色」。所以 Claude 橙用的是 `(255, 20, 3)`。
 
-另外，呼吸时如果直接把 RGB 按亮度整数缩放，绿色这个小数值在低亮度下会先被舍掉，导致颜色一会儿偏黄一会儿偏红。现在的实现是三个通道按同一比例、带四舍五入地缩放，并且最暗只到 30%，整个呼吸过程色相基本不变。
+另外，呼吸时如果直接把 RGB 按亮度整数缩放，绿色这个小数值在低亮度下会先被舍掉，导致颜色一会儿偏黄一会儿偏红。现在的实现是三个通道按同一比例、带四舍五入地缩放，并且最暗只到 35%，整个呼吸过程色相基本不变。
 
 ---
 
@@ -119,6 +121,10 @@ dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D firmware/nuphy_air60_v2_ansi_v
 
 ### 4. 安装 Mac 端
 
+**推荐：** 下载 [Agent Lumen](https://github.com/hongqi7/agent-lumen/releases/latest)，打开后点「接入」。连上 NuPhy 键盘时 macOS 会请求「输入监控」权限，允许后重开一次 App。
+
+**或者用命令行方案**（不装 App）：
+
 ```bash
 ./host/install.sh
 ```
@@ -172,15 +178,15 @@ Devin 有两个坑：
 
 ## Halo65 V2（实验版）
 
-> ⚠️ **尚未在实机上验证**：代码能编译，但颜色和动画还没在真键盘上看过。仓库里不提供编好的 bin，需要自己编译；刷之前一定先备份原厂固件。
+> ⚠️ **尚未在实机上验证**：代码能编译，但颜色和呼吸效果还没在真键盘上看过。仓库里不提供编好的 bin，需要自己编译；刷之前一定先备份原厂固件。
 
 Halo65 V2（65% 配列、高轴）和 Air60 V2 是同一颗芯片（STM32F072）、同一套开源代码结构，刷机方式也一样。区别在于状态显示在键盘四周那圈 **50 颗灯的光环**上：
 
 | 状态 | 光环 |
 |---|---|
-| 工作中 | 橙色光点带着渐暗的尾巴绕光环转圈（约 2 秒一圈），其余灯暗橙底色 |
-| 等你确认 | 整圈蓝色呼吸 |
-| 完成 | 整圈绿色常亮 |
+| 工作中 | 整圈橙色呼吸，约 2 秒一次 |
+| 等你确认 | 整圈蓝色呼吸，约 1.2 秒一次 |
+| 完成 | 整圈绿色呼吸，约 3 秒一次 |
 
 配色按 NuPhy 自己给光环调的比例来：它的光环绿、蓝灯珠特别亮，官方色表里纯绿、纯蓝只用到 `0x60`，红色用到 `0xff`。另外 10 颗灯 NuPhy 单独换了一套偏暗红的色表，补丁按同样比例做了补偿。
 
@@ -237,7 +243,7 @@ GPL-2.0-or-later（固件改动派生自 GPL 授权的 QMK / NuPhy 源码）。�
 
 ## English summary
 
-Turns the RGB side lights of a **NuPhy Air60 V2** (ANSI) into an AI agent status indicator on macOS: **orange breathing** while the agent is working, **blue breathing** while it waits for your approval or an answer, **green** when the turn is done, and your normal lighting otherwise. Works over Bluetooth and USB. Supports Claude Code, WorkBuddy and Devin (local sessions), all of which use the same hook format; `host/install.sh` adds the hooks to every one it finds. An experimental, not yet hardware-tested patch for the **NuPhy Halo65 V2** shows the state on its 50-LED halo (`firmware/build.sh halo65`).
+Turns the RGB side lights of a **NuPhy Air60 V2** (ANSI) into an AI agent status indicator on macOS: **orange** (2 s breath) while the agent is working, **blue** (1.2 s) while it waits for your approval or an answer, **green** (3 s) when the turn is done, and your normal lighting otherwise. The recommended Mac side is [Agent Lumen](https://github.com/hongqi7/agent-lumen), a menu bar app that connects the agents, drives the keyboard and glows the screen edge with the same colours and timing; `host/` is a script-only alternative (use one or the other). Works over Bluetooth and USB. Supports Claude Code, WorkBuddy and Devin (local sessions), all of which use the same hook format; `host/install.sh` adds the hooks to every one it finds. An experimental, not yet hardware-tested patch for the **NuPhy Halo65 V2** shows the state on its 50-LED halo (`firmware/build.sh halo65`).
 
 How: agent hooks call `host/claude-light`, which uses IOKit (`host/kbled`) to set the keyboard's **Num Lock / Scroll Lock** indicator bits (macOS never uses them). A small patch to NuPhy's open-source QMK firmware (`firmware/claude-light.patch`, touching `side.c` and `sleep.c`) maps those bits to the side lights and keeps the board awake while Claude is busy. NuPhy's wireless module forwards the 3 lock bits, so it works over Bluetooth too.
 
