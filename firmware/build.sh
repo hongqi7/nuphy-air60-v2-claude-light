@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the Claude-light firmware from NuPhy's open-source QMK tree.
 #   ./build.sh           Air60 V2 (default)
-#   ./build.sh halo65    Halo65 V2 (experimental, not yet tested on hardware)
+#   ./build.sh halo65    Halo65 V2
 # Needs: git, uv (or pip), Homebrew. Output: ./nuphy_<board>_ansi_via.bin
 set -euo pipefail
 
